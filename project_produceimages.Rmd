@@ -9,18 +9,6 @@ output:
 editor_options:
   chunk_output_type: console
 ---
-
-### **Instructions**
-1. You must submit both your **.Rmd** and "knitted" **.pdf** (or **.html**) files to the appropriate Assignments Dropbox folder on D2L.<br />
-2. This assignment is due **before class** on the due date listed above.<br />
-3. You are allowed to work together on this assignment. List any classmates you collaborated with here (leave as is if you worked on it by yourself): **[insert classmates]**
-
-### **Data**
-In this assignment, you will be working with the following datasets:
-
-  * *wine_testing.csv* - uploaded on D2L Assignment
-  * *heart_train.csv* - uploaded on D2L Assignment 
-  * *heart_test.csv* - uploaded on D2L Assignment 
   
 
 ```{r initiatePackages, message=FALSE}
