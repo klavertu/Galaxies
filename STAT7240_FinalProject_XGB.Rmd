@@ -1,0 +1,133 @@
+---
+title: 'STAT 7240: project'
+author: "Kelly Lavertu"
+date: "October 18, 2023"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: console
+---
+
+```{r initiatePackages, message=FALSE}
+# Packages: you can add/change (these are suggestions)
+
+library(tidyverse)
+library(OpenImageR)
+library(keras)
+library(caret)
+library(fastai)
+library(magrittr)
+library(tensorflow)
+library(reticulate)
+library(stringr)
+library(doParallel)
+library(DBI)
+library(dplyr)
+library(dbplyr)
+library(odbc)
+library(imager)
+library(httr)
+library(jpeg)
+
+
+library(factoextra)
+library(cluster)
+library(tidyr)
+library(ggplot2)
+library(ggdendro)
+library(dendextend)
+
+
+```
+
+
+```{r}
+
+# set work directory, load all images
+
+setwd("~/R/projectimages")
+
+path = "~/R/projectimages"
+
+filepathnames = get_image_files(path)
+
+```
+
+
+```{r}
+
+filenameslist = list.files(recursive = T, pattern="\\.jpeg$",
+    full.names=T)
+
+labels <- sapply(strsplit(filenameslist, "/"), `[`, 2)  # Extract the subfolder name
+
+preprocess_image <- function(image_path) {
+  img <- load.image(image_path)
+  as.numeric(img)  # Convert to numeric vector
+}
+
+
+features = do.call(rbind, lapply(filenameslist, preprocess_image))
+
+image.data = data.frame(image = I(features), label = labels)
+# this is for a deep learning model
+# train.data.gen = image_data_generator(rescale = 1/255)
+# 
+# train.generator <- flow_images_from_directory(
+#   directory = path,
+#   generator = train.data.gen,
+#   target_size = c(150, 150), # Adjust depending on your model's input size
+#   batch_size = 32,
+#   class_mode = 'categorical'
+# )
+# 
+# train.generator$class_indices
+
+
+```
+
+```{r}
+set.seed(12)
+
+data.part = createDataPartition(image.data$label, p = 0.1, list = F)
+
+trainingData = image.data[data.part, ]
+testingData = image.data[-data.part, ]
+```
+
+```{r}
+#prop.table(table(image.data$label))
+
+registerDoParallel(cores = detectCores())
+# the proportions for each class are split pretty evenly so as a balanced dataset I will use accuracy
+
+
+
+my.grid = expand.grid(mtry = 902, 
+                      splitrule = "gini",
+                      min.node.size = 1)
+
+start.time = Sys.time()
+set.seed(12)
+rf = caret::train(label ~.,
+                  data = trainingData,
+                  method = "ranger",
+                  metric = "Accuracy",
+                  tunelength = 5,
+                  num.trees = 1000,
+                  trControl = trainControl(method = "cv", number = 5, allowParallel = T))
+
+end.time = Sys.time()
+total.time = end.time-start.time
+
+total.timel
+```
+
+```{r}
+# Identify the best model
+rf$results %>% arrange(desc(Accuracy))
+
+```
+

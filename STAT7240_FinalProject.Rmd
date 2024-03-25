@@ -1,0 +1,795 @@
+---
+title: 'STAT 7240: project'
+author: "Kelly Lavertu"
+due: "December 6, 2023"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: console
+---
+
+```{r initiatePackages, message=FALSE}
+# Packages: you can add/change (these are suggestions)
+library(tidyverse)
+library(OpenImageR)
+library(keras)
+library(caret)
+library(fastai)
+library(magrittr)
+library(tensorflow)
+library(reticulate)
+library(stringr)
+library(doParallel)
+library(xgboost)
+library(DBI)
+library(dplyr)
+library(dbplyr)
+library(odbc)
+library(imager)
+library(httr)
+library(jpeg)
+library(rBayesianOptimization)
+library(Metrics)
+
+
+library(pROC)
+library(multiROC)
+
+library(factoextra) # do I use this?
+library(cluster) # do I use this?
+library(tidyr)
+library(ggplot2)
+library(ggdendro) # do I use this?
+library(dendextend) # do I use this?
+
+
+```
+
+
+```{r}
+
+# set work directory, load all images
+
+setwd("~/R/oldprojectimages")
+
+path = "~/R/oldprojectimages"
+
+filepathnames = get_image_files(path)
+
+```
+
+
+```{r}
+
+filenameslist = list.files(recursive = T, pattern="\\.jpeg$",
+    full.names=T)
+
+labels <- sapply(strsplit(filenameslist, "/"), `[`, 2)   # Extract the subfolder name
+
+preprocess_image <- function(image_path) {
+  img <- load.image(image_path)
+  as.numeric(img)  # Convert to numeric vector
+}
+
+
+features = do.call(rbind, lapply(filenameslist, preprocess_image))
+
+image.data = data.frame(image = I(features), label = labels)
+```
+
+```{r}
+set.seed(12)
+
+data.part = createDataPartition(image.data$label, p = 0.8, list = F)
+
+trainingData = image.data[data.part, ]
+testingData = image.data[-data.part, ]
+```
+
+```{r}
+#prop.table(table(image.data$label))
+
+# the proportions for each class are split pretty evenly so as a balanced dataset I will use accuracy
+
+
+
+my.grid = expand.grid(mtry = 489, 
+                      splitrule = "extratrees",
+                      min.node.size = 1)
+
+#trainingdata.shuffle = trainingData[sample(nrow(trainingData)),]
+
+start.time = Sys.time()
+set.seed(12)
+rf = caret::train(label ~.,
+                  data = trainingData,
+                  method = "ranger",
+                  metric = "Accuracy",
+                  tuneGrid = my.grid,
+                  num.trees = 1000,
+                  trControl = trainControl(classProbs = T, method = "cv", number = 5))
+
+end.time = Sys.time()
+total.time = end.time-start.time
+
+total.time
+```
+
+```{r}
+# Identify the best model
+rf$results %>% arrange(desc(Accuracy))
+
+```
+
+```{r}
+rf.class.tune = predict(rf, newdata = testingData)
+```
+
+```{r}
+rf.predicted.probs = predict(rf, newdata = testingData, type = "prob")
+```
+
+
+```{r}
+levels_all <- union(levels(testingData$label), levels(rf.class.tune))
+rf.class.tune <- factor(rf.class.tune, levels = levels_all)
+testingData$label <- factor(testingData$label, levels = levels_all)
+
+rf.accuracy = confusionMatrix(rf.class.tune, testingData$label, mode = "everything", positive="1")
+
+print(rf.accuracy$overall['Accuracy'])
+
+```
+
+```{r}
+rf.accuracy
+```
+
+```{r}
+# Plot using ggplot2
+
+rf.matrix <- as.data.frame(rf.accuracy$table)
+
+ggplot(rf.matrix, aes(Reference, Prediction, fill = Freq)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = sprintf("%d", Freq)), vjust = 1) +
+    scale_fill_gradient(low = "white", high = "steelblue") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(title = "Random Forest Confusion Matrix", 
+         subtitle = "Predicted vs Actual Categories",
+         fill = "Frequency")
+```
+
+```{r}
+# rf.roc = multiclass.roc(testingData$label, rf.predicted.probs, plot = T)
+```
+
+```{r}
+# plot.roc(rf.roc$response, rf.roc$predictor, )
+```
+
+
+```{r}
+# rf.accuracy.df = as.data.frame(as.table(rf.accuracy))
+# 
+# ggplot(data = rf.accuracy.df, aes(x = Reference, y = Freq, fill = Prediction)) +
+#   geom_bar(stat = "identity") +
+#   labs(title = "Random Forest Confusion Matrix",
+#        x = "Actual Class",
+#        y = "Frequency") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+#   scale_fill_manual(values = c("galaxy" = "#dfc17b", "quasar" = "#595959", "star" = "steelblue"))
+
+```
+
+```{r}
+# roc_curves = list()
+# y <- factor(testingData$label)
+# mcroc <- multiclass.roc(response = y, predictor = rf.predicted.probs)
+
+```
+
+```{r}
+# auc_values <- numeric(length(levels(y)))
+# colors <- c("#dfc17b", "#595959", "steelblue")
+# plot(NULL, xlim=c(0, 1), ylim=c(0, 1), xlab="False Positive Rate", ylab="True Positive Rate", main=" Random Forest Multiclass ROC Curves")
+# 
+# for (i in 1:length(levels(y))) {
+#     # Create a binary response for the current class vs rest
+#     binary_response = ifelse(y == levels(y)[i], "positive", "negative")
+#     binary_response = factor(binary_response, levels = c("negative", "positive"))
+# 
+#     # Compute and plot ROC curve for the binary response
+#     binary_roc = roc(binary_response, rf.predicted.probs[, i])
+#     auc_values[i] <- auc(binary_roc)
+#     plot(binary_roc, col = colors[i], add = TRUE)
+# 
+# }
+# 
+# # Adding a legend
+# legend("bottomright", legend = levels(y), fill = colors)
+# 
+# auc_subtitle <- paste("AUC values:", paste(levels(y), sprintf("%.2f", auc_values), collapse=", "))
+# 
+# # Add the subtitle using mtext
+# mtext(auc_subtitle, side=1, line=4, cex=0.8)
+```
+
+
+```{r}
+#prop.table(table(image.data$label))
+
+# xgboost
+# choosing learning rate as .3,.4 -- may have to change later -- did change
+# xgb.eta = c(0.2, .4)
+# # max_depth (default 6)
+# xgb.depth = c(3, 6)
+# # gamma (default of 0)
+# xgb.gamma = c(0, 5)
+# # colsample_bytree (default 1)
+# xgb.col = c(0.75, 1)
+# # min_child_weight (default 1)
+# xgb.child = c(1, 2)
+# # subsample (default 1)
+# xgb.sub = c(0.75, 1)
+# # nrounds (default 100)
+# xgb.num = c(100, 150)
+
+xgb.eta = 0.1
+# max_depth (default 6)
+xgb.depth = 3
+# gamma (default of 0)
+xgb.gamma = 0
+# colsample_bytree (default 1)
+xgb.col = 1
+# min_child_weight (default 1)
+xgb.child = 1
+# subsample (default 1)
+xgb.sub = 1
+# nrounds (default 100)
+xgb.num = 100
+
+
+xgb.grid = expand.grid(eta = xgb.eta,
+                       max_depth = xgb.depth,
+                       gamma = xgb.gamma,
+                       colsample_bytree = xgb.col,
+                       min_child_weight = xgb.child,
+                       subsample = xgb.sub,
+                       nrounds = xgb.num)
+  
+#   * Select an appropriate evaluation metric and explain your choice 
+## I will use Kappa again for the same reason I used it in the previous question
+xgb.metric = "Accuracy"
+
+
+#   * Train the models (*Note*: set a random number seed of your choice prior to training)
+start.time = Sys.time()
+set.seed(123)
+xgb.tune = caret::train(label ~.,
+                        data = trainingData,
+                        method = "xgbTree",
+                        metric = xgb.metric,
+                        verbosity = 0,
+                        trControl = trainControl(method = "cv", number = 10),
+                        tuneGrid = xgb.grid
+                        )
+
+end.time = Sys.time()
+total.time = end.time-start.time
+
+total.time
+
+xgb.best = xgb.tune$results %>% arrange(desc(Accuracy))
+xgb.best
+```
+
+```{r}
+xgb.class.tune = predict(xgb.tune, newdata = testingData)
+```
+
+```{r}
+xgb.predicted.probs = predict(xgb.tune, newdata = testingData, type = "prob")
+```
+
+
+```{r}
+xgb.levels.all <- union(levels(testingData$label), levels(xgb.class.tune))
+xgb.class.tune <- factor(xgb.class.tune, levels = xgb.levels.all)
+testingData$label <- factor(testingData$label, levels = xgb.levels.all)
+
+xgb.accuracy = confusionMatrix(xgb.class.tune, testingData$label, mode = "everything", positive="1")
+
+print(xgb.accuracy$overall['Accuracy'])
+
+```
+
+```{r}
+xgb.accuracy
+```
+
+```{r}
+xgb.matrix <- as.data.frame(xgb.accuracy$table)
+
+# Plot using ggplot2
+ggplot(xgb.matrix, aes(Reference, Prediction, fill = Freq)) +
+    geom_tile(color = "white") +
+    geom_text(aes(label = sprintf("%d", Freq)), vjust = 1) +
+    scale_fill_gradient(low = "white", high = "steelblue") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(title = "XGBoost Confusion Matrix", 
+         subtitle = "Predicted vs Actual Categories",
+         fill = "Frequency")
+```
+
+```{r}
+# xgb.accuracy.df = as.data.frame(as.table(xgb.accuracy))
+# 
+# ggplot(data = xgb.accuracy.df, aes(x = Reference, y = Freq, fill = Prediction)) +
+#   geom_bar(stat = "identity") +
+#   labs(title = "XGBoost Confusion Matrix",
+#        x = "Actual Class",
+#        y = "Frequency") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+#   scale_fill_manual(values = c("galaxy" = "#dfc17b", "quasar" = "#595959", "star" = "steelblue"))
+
+```
+
+```{r}
+# xgb_roc_curves = list()
+# xgb_y <- factor(testingData$label)
+# xgb_mcroc = multi_roc(xgb.predicted.probs)
+
+
+```
+
+```{r}
+# xgb.plot.roc.df = plot_roc_data(xgb_mcroc)
+```
+
+
+```{r}
+# xgb_auc_values <- numeric(length(levels(xgb_y)))
+# plot(NULL, xlim=c(0, 1), ylim=c(0, 1), xlab="False Positive Rate", ylab="True Positive Rate", main="XGBoost Multiclass ROC Curves")
+# 
+# for (i in 1:length(levels(xgb_y))) {
+#     # Create a binary response for the current class vs rest
+#     binary_response = ifelse(y == levels(xgb_y)[i], "positive", "negative")
+#     binary_response = factor(binary_response, levels = c("negative", "positive"))
+# 
+#     # Compute and plot ROC curve for the binary response
+#     binary_roc = roc(binary_response, 1 -xgb.predicted.probs[, i])
+#     xgb_auc_values[i] <- auc(binary_roc)
+#     plot(binary_roc, col = colors[i], add = TRUE)
+# 
+# }
+# 
+# # Adding a legend
+# legend("bottomright", legend = levels(xgb_y), fill = colors)
+# 
+# xgb_auc_subtitle <- paste("AUC values:", paste(levels(xgb_y), sprintf("%.2f", xgb_auc_values), collapse=", "))
+# 
+# # Add the subtitle using mtext
+# mtext(xgb_auc_subtitle, side=1, line=4, cex=0.8)
+# xgb_y
+```
+
+
+```{r}
+# convolutional neural network data partitions
+
+setwd("~/R/projectimages/train")
+
+cnntrainpath = "~/R/projectimages/train"
+
+testpath = "~/R/projectimages/test"
+```
+
+```{r}
+cnnfilepathnames = get_image_files(cnntrainpath)
+
+cnnfilenameslist = list.files(recursive = T, pattern="\\.jpeg$",
+    full.names=T)
+
+trainlabels <- sapply(strsplit(cnnfilenameslist, "/"),  function(x) x[length(x)-1])   # Extract the subfolder name
+```
+
+
+```{r}
+testfilenameslist = list.files(testpath,recursive = T, pattern="\\.jpeg$",
+    full.names=T)
+
+testlabels <- sapply(strsplit(testfilenameslist, "/"),  function(x) x[length(x)-1])  # Extract the subfolder name
+```
+
+
+```{r}
+cnn.image.data = data.frame(file = cnnfilenameslist, label = trainlabels)
+
+cnn.image.test.data = data.frame(file = testfilenameslist, label = testlabels)
+
+set.seed(12)
+
+cnn.data.part = createDataPartition(cnn.image.data$label, p = 0.89, list = F)
+
+
+cnn.trainingData = cnn.image.data[cnn.data.part, ]
+cnn.valData = cnn.image.data[-cnn.data.part, ]
+```
+
+
+
+```{r}
+target_size = c(175, 175)
+batch_size = 64
+
+# this is for a deep learning model
+train.data.gen = image_data_generator(rescale = 1/255,
+                                      rotation_range = 20,  # Degrees range for random rotations
+                                      width_shift_range = 0.2,  # Fraction of total width for horizontal shifts
+                                      height_shift_range = 0.2, # Fraction of total height for vertical shifts
+                                      shear_range = 0.2,   # Shear intensity (shear angle in degrees)
+                                      zoom_range = 0.2,    # Range for random zoom
+                                      horizontal_flip = TRUE,  # Randomly flip inputs horizontally
+                                      fill_mode = 'nearest')
+
+test.data.gen = image_data_generator(rescale = 1/255)
+val.data.gen = image_data_generator(rescale = 1/255)
+
+train.generator <- flow_images_from_dataframe(dataframe = cnn.trainingData,
+                                              x_col = "file",
+                                              y_col = "label",
+                                              generator = train.data.gen,
+                                              target_size = target_size,
+                                              batch_size = batch_size,
+                                              class_mode = 'categorical',
+                                              shuffle = T)
+
+val.generator <- flow_images_from_dataframe(dataframe = cnn.valData,
+                                              x_col = "file",
+                                              y_col = "label",
+                                              generator = val.data.gen,
+                                              target_size = target_size,
+                                              batch_size = batch_size,
+                                              class_mode = 'categorical',
+                                              shuffle = T)
+
+test.generator <- flow_images_from_directory(directory = testpath,
+                                             generator = test.data.gen,
+                                              target_size = target_size,
+                                              batch_size = batch_size,
+                                              class_mode = 'categorical')
+
+```
+
+```{r}
+
+# number of training samples
+train_samples = train.generator$n
+
+# number of validation samples
+val_samples = val.generator$n
+
+# number of test samples
+test_samples = test.generator$n
+
+# number of target classes
+output_n_classes = n_distinct(train.generator$classes)
+
+# class proportions
+table("\nFrequency" = factor(train.generator$classes)
+      ) %>% 
+  prop.table()
+
+```
+
+```{r}
+# START OF BHO
+tensorflow::tf$random$set_seed(123)
+# this is the first step for BHO
+build_bho_cnn_model <- function(filter_number, dense_units, dropout_rate) {
+  model <- keras_model_sequential() %>%
+    layer_conv_2d(filters = filter_number, kernel_size = c(3, 3), activation = 'relu', input_shape = c(target_size, 3)) %>%
+    layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+    layer_flatten() %>%
+    layer_dense(units = dense_units, activation = 'relu') %>%
+    layer_dropout(rate = dropout_rate) %>%
+    layer_dense(units = 3, activation = 'softmax')
+
+  model %>% compile(
+    loss = 'categorical_crossentropy',
+    optimizer = optimizer_adam(learning_rate = 0.001),
+    metrics = c('accuracy')
+  )
+
+  return(model)
+}
+
+```
+
+```{r}
+
+# second step in BHO
+optimize_bho_cnn <- function(filter_number, dense_units, dropout_rate) {
+  # Convert parameters to integer where necessary
+  filter_number <- round(filter_number)
+  dense_units <- round(dense_units)
+
+  # Build and train the model
+  model <- build_bho_cnn_model(filter_number, dense_units, dropout_rate)
+  history <- model %>% fit(
+    train.generator,
+    epochs = 20, batch_size = 64,
+    validation_data = val.generator,
+    verbose = 0
+  )
+
+  # Best validation accuracy
+  val_accuracy = max(history$metrics$val_accuracy)
+  return(list(Score = val_accuracy))
+}
+
+```
+
+```{r}
+
+# step 3 in BHO
+bho_bounds <- list(
+  filter_number = c(32L, 64L, 128L),
+  dense_units = c(50L,100L, 200L),
+  dropout_rate = c(0.0, 0.1, 0.3, 0.5)
+)
+
+bayes_opt_result <- BayesianOptimization(
+  FUN = optimize_bho_cnn,
+  bounds = bho_bounds,
+  init_points = 20,  # Number of randomly chosen points to sample the target function before Bayesian Optimization starts
+  n_iter = 30,       # Number of iterations
+  acq = "ei",        # Acquisition function
+  verbose = 0
+)
+
+```
+
+```{r}
+best.bho = bayes_opt_result$Best_Par
+```
+
+```{r}
+bayes_opt_result$History
+```
+
+```{r}
+final.bho.model = build_bho_cnn_model(best.bho[1], best.bho[2], best.bho[3])
+```
+
+```{r}
+start.time = Sys.time()
+
+bho.history <- final.bho.model %>% fit(train.generator,
+                                 steps_per_epoch = as.integer(train_samples/batch_size),
+                                 epochs = 20,
+                                 validation_data = val.generator,
+                                 validation_steps = as.integer(val_samples/batch_size))
+
+
+
+end.time = Sys.time()
+total.time = end.time-start.time
+
+total.time
+```
+
+
+```{r}
+# Assuming 'cnn.history' contains 'loss', 'val_loss', 'accuracy', and 'val_accuracy'
+epochs <- seq_len(length(bho.history$metrics$loss))
+
+# Create a data frame for loss
+loss_data <- data.frame(
+  epoch = epochs,
+  value = c(bho.history$metrics$loss, bho.history$metrics$val_loss),
+  metric = rep(c("Training Loss", "Validation Loss"), each = length(epochs))
+)
+
+# Create a data frame for accuracy
+accuracy_data <- data.frame(
+  epoch = epochs,
+  value = c(bho.history$metrics$accuracy, bho.history$metrics$val_accuracy),
+  metric = rep(c("Training Accuracy", "Validation Accuracy"), each = length(epochs))
+)
+
+# Plot for loss
+loss.plt = ggplot(loss_data, aes(x = as.integer(epoch), y = value, color = metric)) +
+  geom_line() +
+  theme_minimal() +
+  ggtitle("CNN Training and Validation Loss") +
+  xlab("Epoch") +
+  ylab("Loss") +
+  scale_color_manual(values = c("#dfc17b", "#595959"))
+
+# Plot for accuracy
+acc.plt = ggplot(accuracy_data, aes(x = as.integer(epoch), y = value, color = metric)) +
+  geom_line() +
+  theme_minimal() +
+  ggtitle("CNN Training and Validation Accuracy") +
+  xlab("Epoch") +
+  ylab("Accuracy") +
+  scale_color_manual(values = c("#dfc17b", "#595959"))
+
+loss.plt
+
+acc.plt
+```
+
+```{r}
+set.seed(123)
+test.results <- final.bho.model %>% evaluate(x = test.generator,
+                                                 steps = ceiling(length(cnn.image.test.data$label) / batch_size))
+
+cat("Test Loss:", test.results[["loss"]], "\n")
+cat("Test Accuracy:", test.results[["accuracy"]], "\n")
+```
+
+```{r}
+# START OF CUSTOM MODEL
+# this is the best model I found manually -- I am going to try Bayesian Hyperparameter Optimization
+
+
+# Best Parameters Found: 
+# Round = 32	filter_number = 37.0000	dense_units = 57.0000	dropout_rate = 0.09806058	Value = 0.8761261 
+set.seed(123)
+# filters = 32
+cnn.model <- keras_model_sequential(name = "simple_model") %>%
+  # 1st convolution layer
+  layer_conv_2d(filters = 37,
+                kernel_size = c(3,3),
+                padding = "same",
+                activation = "relu",
+                input_shape = c(target_size, 3)) %>%
+  
+  # max pooling layer
+  layer_max_pooling_2d(pool_size = c(2,2)) %>%
+
+  # flattening layer
+  layer_flatten() %>%
+
+  # dense layer units = 16
+  layer_dense(units = 57,
+              activation = "relu") %>%
+
+  # output layer
+  layer_dense(units = output_n_classes,
+              activation = "softmax",
+              name = "Output")
+
+```
+
+```{r}
+cnn.model
+```
+
+```{r}
+cnn.model %>% compile(loss = "categorical_crossentropy",
+                      optimizer = optimizer_adam(learning_rate = 0.001),
+                      metrics = "accuracy")
+
+```
+
+```{r}
+
+start.time = Sys.time()
+set.seed(123)
+cnn.history <- cnn.model %>% fit(train.generator,
+                                 steps_per_epoch = as.integer(train_samples/batch_size),
+                                 batch_size = batch_size,
+                                 epochs = 20,
+                                 validation_data = val.generator,
+                                 validation_steps = as.integer(val_samples/batch_size))
+
+
+
+end.time = Sys.time()
+total.time = end.time-start.time
+
+total.time
+
+```
+
+```{r}
+# Assuming 'cnn.history' contains 'loss', 'val_loss', 'accuracy', and 'val_accuracy'
+epochs <- seq_len(length(cnn.history$metrics$loss))
+
+# Create a data frame for loss
+loss_data <- data.frame(
+  epoch = epochs,
+  value = c(cnn.history$metrics$loss, cnn.history$metrics$val_loss),
+  metric = rep(c("Training Loss", "Validation Loss"), each = length(epochs))
+)
+
+# Create a data frame for accuracy
+accuracy_data <- data.frame(
+  epoch = epochs,
+  value = c(cnn.history$metrics$accuracy, cnn.history$metrics$val_accuracy),
+  metric = rep(c("Training Accuracy", "Validation Accuracy"), each = length(epochs))
+)
+
+# Plot for loss
+loss.plt = ggplot(loss_data, aes(x = epoch, y = value, color = metric)) +
+  geom_line() +
+  theme_minimal() +
+  ggtitle("CNN Training and Validation Loss") +
+  xlab("Epoch") +
+  ylab("Loss") +
+  scale_color_manual(values = c("#dfc17b", "#595959"))
+
+# Plot for accuracy
+acc.plt = ggplot(accuracy_data, aes(x = accuracy(), y = value, color = metric)) +
+  geom_line() +
+  theme_minimal() +
+  ggtitle("CNN Training and Validation Accuracy") +
+  xlab("Epoch") +
+  ylab("Accuracy") +
+  scale_color_manual(values = c("#dfc17b", "#595959"))
+
+loss.plt
+
+acc.plt
+
+accloss.plt
+```
+
+
+
+```{r}
+plot_data <- data.frame(Epoch = rep(epochs, 4),
+                        Metric_Value = c(cnn.history$metrics$loss, cnn.history$metrics$val_loss, cnn.history$metrics$accuracy, cnn.history$metrics$val_accuracy),
+                        Metric_Type = factor(rep(c("Train Loss", "Validation Loss", "Train Accuracy", "Validation Accuracy"), each = length(epochs))))
+  
+  ggplot(plot_data, aes(x = Epoch, y = Metric_Value, color = Metric_Type)) +
+  geom_line() +
+  labs(title = "Loss vs Accuracy", x = "Epoch", y = "Value") +
+  scale_color_manual(values = c("#eb8055ff", "#414487ff", "#dfc17b", "#7AD151FF")) +
+  theme_minimal()
+```
+
+
+```{r}
+set.seed(123)
+test.results <- cnn.model %>% evaluate(x = test.generator,
+                                                 steps = ceiling(length(cnn.image.test.data$label) / batch_size))
+
+cat("Test Loss:", test.results[["loss"]], "\n")
+cat("Test Accuracy:", test.results[["accuracy"]], "\n")
+```
+
+```{r}
+predictions <- cnn.model %>% predict_generator(generator = test.generator,
+                                     steps = ceiling(length(cnn.image.test.data$label) / batch_size))
+
+predicted.classes <- apply(predictions, 1, which.max)
+true.classes <- cnn.image.test.data$label
+
+class_mapping <- c("1" = "galaxy", "2" = "quasar", "3" = "star")
+
+# Convert predicted.classes to categorical labels
+predicted.classes.labels <- class_mapping[as.character(predicted.classes)]
+
+levels_to_use <- c("galaxy", "quasar", "star")
+predicted.classes.factor <- factor(predicted.classes.labels, levels = levels_to_use)
+true.classes.factor <- factor(true.classes, levels = levels_to_use)
+
+length(predicted.classes)
+length(true.classes)
+# Confusion Matrix
+cnn.cm = confusionMatrix(factor(predicted.classes.factor), factor(true.classes.factor))
+
+cnn.cm
+```
+
