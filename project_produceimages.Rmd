@@ -1,0 +1,305 @@
+---
+title: 'STAT 7240: project'
+author: "Kelly Lavertu"
+date: "October 18, 2023"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: console
+---
+
+### **Instructions**
+1. You must submit both your **.Rmd** and "knitted" **.pdf** (or **.html**) files to the appropriate Assignments Dropbox folder on D2L.<br />
+2. This assignment is due **before class** on the due date listed above.<br />
+3. You are allowed to work together on this assignment. List any classmates you collaborated with here (leave as is if you worked on it by yourself): **[insert classmates]**
+
+### **Data**
+In this assignment, you will be working with the following datasets:
+
+  * *wine_testing.csv* - uploaded on D2L Assignment
+  * *heart_train.csv* - uploaded on D2L Assignment 
+  * *heart_test.csv* - uploaded on D2L Assignment 
+  
+
+```{r initiatePackages, message=FALSE}
+# Packages: you can add/change (these are suggestions)
+library(SciServer)
+library(DBI)
+library(dplyr)
+library(dbplyr)
+library(odbc)
+library(imager)
+library(httr)
+library(jpeg)
+
+library(tidyverse)
+library(factoextra)
+library(cluster)
+library(tidyr)
+library(ggplot2)
+library(ggdendro)
+library(dendextend)
+
+```
+
+
+```{r}
+username = "kellylavertu"
+password = "iDXPvvY!tkRJRf9"
+
+auth_login = Authentication.login(username, password)
+
+SkyServer.objectSearch(objId=NULL, specObjId=NULL, apogee_id=NULL, apstar_id=NULL, ra=NULL, dec=NULL, plate=NULL, mjd=NULL, fiber=NULL, run=NULL, rerun=NULL, camcol=NULL, field=NULL, obj=NULL, dataRelease=NULL)
+
+# galaxy_query = "SELECT TOP 1000 p.objId,p.ra,p.dec,p.petror90_r, p.expAB_r,
+#     p.dered_u as u, p.dered_g as g, p.dered_r as r, p.dered_i as i, 
+#     s.z, s.plate, s.mjd, s.fiberid, g.p_cw as cw_spiral, g.p_acw as acw_spiral, g.p_edge as edgeon_spiral, g.spiral as spflag, g.elliptical as elflag, g.uncertain as ucflag
+# FROM galaxy AS p
+#    JOIN SpecObj AS s ON s.bestobjid = p.objid
+#    JOIN zooSpec AS g ON g.objid = p.objid
+# WHERE p.petror90_r > 10
+#   and p.ra between 100 and 250
+#   and s.z between 0.02 and 0.5
+#   and p.g < 17"
+# 
+# galaxy_search = SkyServer.sqlSearch(sql = galaxy_query)
+# galaxy_search
+# print("Number of galaxies:")
+# nrow(galaxy_search)
+```
+
+
+
+
+```{r}
+# star_query = "SELECT TOP 10000 p.objId,p.ra,p.dec,p.petror90_r, p.expAB_r,
+#     p.dered_u as u, p.dered_g as g, p.dered_r as r, p.dered_i as i, 
+#     s.z, s.plate, s.mjd, s.fiberid
+# FROM star AS p
+#    JOIN SpecObj AS s ON s.bestobjid = p.objid"
+# 
+# star_search = SkyServer.sqlSearch(sql = star_query)
+# star_search
+# print("Number of stars:")
+# nrow(star_search)
+```
+
+
+```{r}
+# gal_plot = ggplot(data = galaxy_search) + geom_point(aes(x = galaxy_search$ra, y = galaxy_search$dec), fill = "black", size= 0.01) +
+#   labs(
+#     title = "GALAXY POSITIONS",
+#     x = "RA",
+#     y = "Dec")
+# 
+# plot(gal_plot)
+```
+
+
+
+```{r}
+# star_plot = ggplot(data = star_search) + geom_point(aes(x = star_search$ra, y = star_search$dec), fill = "black", size= 0.01) +
+#   labs(
+#     title = "STAR POSITIONS",
+#     x = "RA",
+#     y = "Dec")
+# 
+# plot(star_plot)
+```
+
+
+
+```{r}
+gal_sample_query = "SELECT TOP 1500 p.objId,p.ra,p.dec,p.petror90_r, p.expAB_r,
+    p.dered_u as u, p.dered_g as g, p.dered_r as r, p.dered_i as i, 
+    s.z, s.plate, s.mjd, s.fiberid, g.p_cw as cw_spiral, g.p_acw as acw_spiral, g.p_edge as edgeon_spiral, g.spiral as spflag, g.elliptical as elflag, g.uncertain as ucflag
+FROM galaxy AS p 
+   JOIN SpecObj AS s ON s.bestobjid = p.objid
+   JOIN zooSpec AS g ON g.objid = p.objid
+WHERE p.petror90_r > 10
+  and p.ra between 100 and 250
+  and s.z between 0.02 and 0.5
+  and p.g < 17"
+gal_sample_search = SkyServer.sqlSearch(sql = gal_sample_query)
+gal_counter = 0
+galaxy_type = ""
+spiral_type = ""
+
+# Function to download images
+download_sdss_images <- function(objID, ra, dec, e, s, u, cw, acw, eo) {
+  base_url <- "http://skyserver.sdss.org/dr16/SkyServerWS/ImgCutout/getjpeg"
+  width <- 175
+  height <- 175
+  scale <- 0.1
+  
+  # Construct the download URL
+  download_url <- paste0(base_url, "?TaskName=Skyserver.ObjectExplorer.GetJpeg",
+                         "&ra=", ra,
+                         "&dec=", dec,
+                         "&width=", width,
+                         "&height=", height,
+                         "&scale=", scale)
+  
+  # Send GET request and download the image
+  response <- GET(download_url)
+  filename = ""
+  # Check if the request was successful
+  if (http_type(response) == "image/jpeg") {
+    # Get raw content and write it to a binary file
+    gal_counter <<- gal_counter + 1
+    img_content = content(response, "raw")
+    if(e == 1){
+      galaxy_type = "elliptical"
+      filename = file.path("C:/Users/Kelly/Documents/appdatamining/projectimages/galaxy", paste0("galaxy", gal_counter, "_", galaxy_type , ".jpeg"))}
+    else if(s == 1){
+      galaxy_type = "spiral"
+      if(cw>acw & cw>eo){
+        spiral_type = "clockwise"}
+      else if(acw>cw & acw>eo){
+        spiral_type = "anticlockwise"}
+      else if(eo>acw & eo>cw){
+        spiral_type = "edgeon"}
+      filename = file.path("C:/Users/Kelly/Documents/appdatamining/projectimages/galaxy", paste0("galaxy", gal_counter, "_", galaxy_type , "_", spiral_type , ".jpeg"))
+    }
+    else{
+      galaxy_type = "unknown"
+      filename = file.path("C:/Users/Kelly/Documents/appdatamining/projectimages/galaxy", paste0("galaxy", gal_counter, "_", galaxy_type , ".jpeg"))
+    }
+      
+    
+    writeBin(img_content, filename)
+    cat("Downloaded:", filename, "\n")
+    }
+  else {
+    cat("Failed to download image for objID:", objID, "\n")
+  }
+}
+
+
+for (i in 1:nrow(gal_sample_search)) {
+  # I don't think I actually need these. just kidding I do need these
+  objID <- gal_sample_search[i, "objId"]
+  ra <- gal_sample_search[i, "ra"]
+  dec <- gal_sample_search[i, "dec"]
+  
+  elliptical <- gal_sample_search[i, "elflag"]
+  spiral <- gal_sample_search[i, "spflag"]
+  unknown <- gal_sample_search[i, "ucflag"]
+  cw <- gal_sample_search[i, "cw_spiral"]
+  acw <- gal_sample_search[i, "acw_spiral"]
+  eo <- gal_sample_search[i, "edgeon_spiral"]
+  download_sdss_images(objID, ra, dec, elliptical, spiral, unknown, cw, acw, eo)
+}
+
+```
+
+
+```{r}
+# Load required libraries
+
+
+star_sample_query = "SELECT TOP 1500 p.specObjID,p.ra,p.dec, subClass
+FROM SpecObj AS p
+WHERE class = \"Star\""
+
+star_sample_search = SkyServer.sqlSearch(sql = star_sample_query)
+star_counter = 0
+
+# Function to download images
+download_star_images <- function(objID, ra, dec, subclass) {
+  base_url <- "http://skyserver.sdss.org/dr16/SkyServerWS/ImgCutout/getjpeg"
+  width <- 175
+  height <- 175
+  scale <- 0.1
+  
+  # Construct the download URL
+  download_url <- paste0(base_url, "?TaskName=Skyserver.ObjectExplorer.GetJpeg",
+                         "&ra=", ra,
+                         "&dec=", dec,
+                         "&width=", width,
+                         "&height=", height,
+                         "&scale=", scale)
+  
+  # Send GET request and download the image
+  response <- GET(download_url)
+  
+  # Check if the request was successful
+  if (http_type(response) == "image/jpeg") {
+    # Get raw content and write it to a binary file
+    star_counter <<- star_counter + 1
+    img_content = content(response, "raw")
+    filename = file.path("C:/Users/Kelly/Documents/appdatamining/projectimages/star", paste0("star", star_counter, "_", subclass, ".jpeg"))
+    writeBin(img_content, filename)
+    cat("Downloaded:", filename, "\n")
+    
+  } else {
+    cat("Failed to download image for objID:", specObjId, "\n")
+  }
+}
+
+for (i in 1:nrow(star_sample_search)) {
+  objID <- star_sample_search[i, "specObjID"]
+  ra <- star_sample_search[i, "ra"]
+  dec <- star_sample_search[i, "dec"]
+  subclass <- star_sample_search[i, "subClass"]
+  download_star_images(objID, ra, dec, subclass)
+}
+
+```
+
+
+```{r}
+qso_sample_query = "SELECT TOP 1500 s.specObjID, s.ra, s.dec, s.subClass
+FROM SpecObj as s
+WHERE class = \"QSO\""
+qso_sample_search = SkyServer.sqlSearch(sql = qso_sample_query)
+qso_counter = 0
+
+# Function to download images
+download_qso_images <- function(objID, ra, dec, subclass) {
+  base_url <- "http://skyserver.sdss.org/dr16/SkyServerWS/ImgCutout/getjpeg"
+  width <- 175
+  height <- 175
+  scale <- 0.1
+  
+  # Construct the download URL
+  download_url <- paste0(base_url, "?TaskName=Skyserver.ObjectExplorer.GetJpeg",
+                         "&ra=", ra,
+                         "&dec=", dec,
+                         "&width=", width,
+                         "&height=", height,
+                         "&scale=", scale)
+  
+  # Send GET request and download the image
+  response <- GET(download_url)
+  filename = ""
+  # Check if the request was successful
+  if (http_type(response) == "image/jpeg") {
+    # Get raw content and write it to a binary file
+    qso_counter <<- qso_counter + 1
+    img_content = content(response, "raw")
+    filename = file.path("C:/Users/Kelly/Documents/appdatamining/projectimages/quasar", paste0("quasar", qso_counter,"_", subclass , ".jpeg"))
+    writeBin(img_content, filename)
+    cat("Downloaded:", filename, "\n")
+    
+    }
+  else {
+    cat("Failed to download image for objID:", objID, "\n")
+  }
+}
+
+
+for (i in 1:nrow(qso_sample_search)) {
+  # I don't think I actually need these. just kidding I do need these
+  if(i==103) 
+    next
+  objID <- qso_sample_search[i, "specObjID"]
+  ra <- qso_sample_search[i, "ra"]
+  dec <- qso_sample_search[i, "dec"]
+  subclass <- qso_sample_search[i, "subClass"]
+  download_qso_images(objID, ra, dec, subclass)
+}
+```
+
